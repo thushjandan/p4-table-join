@@ -128,6 +128,8 @@ control MyIngress(inout headers hdr,
     
     // Initialize hash table
     register<bit<64>>(NB_CELLS) database;
+    register<bit<1>>(1) databaseControl;
+    register<bit<7>>(1) relationIdRegister;
 
     action drop() {
         mark_to_drop(standard_metadata);
@@ -148,11 +150,17 @@ control MyIngress(inout headers hdr,
         tmpTuple[31:0] = hdr.db_entries[0].thirdAttr;
 
         hash(hashedKey, HashAlgorithm.crc16, (bit<32>)0, { hdr.db_entries[0].entryId }, (bit<32>)NB_CELLS);
-        log_msg("Hashing an entry {}", {hashedKey});
+        log_msg("Hashing an entry {} from {}", {hashedKey, hdr.db_entries[0].entryId});
         // Add entry in hash table
         database.write((bit<32>)hashedKey, tmpTuple);
-
+        hdr.db_entries.pop_front(1);
     }
+
+    action lock_database() {
+        databaseControl.write((bit<32>)0, 1);
+        relationIdRegister.write((bit<32>)0, hdr.db_relation.relationId);
+    }
+
 
     table ipv4_lpm {
         key = {
@@ -172,8 +180,34 @@ control MyIngress(inout headers hdr,
         if (hdr.ipv4.isValid()) {
             ipv4_lpm.apply();
         }
-        if (hdr.db_relation.flush == 1) {
-            db_update();
+        if (hdr.db_entries[0].isValid()) {
+            bit<1> databaseLocked;
+            databaseControl.read(databaseLocked, (bit<32>)0);
+
+            if (hdr.db_relation.flush == 1 && databaseLocked == 0) {
+                lock_database();
+                db_update();
+            }
+
+            if (hdr.db_relation.flush == 1 && databaseLocked == 1) {
+                db_update();
+            }
+
+            if (hdr.db_relation.flush == 0 && databaseLocked == 1) {
+
+                bit<16> hashedKey = 0;
+                bit<64> tmpTuple = 0;
+                bit<32> secondAttr = 0;
+                bit<32> thirdAttr = 0;
+
+                hash(hashedKey, HashAlgorithm.crc16, (bit<32>)0, { hdr.db_entries[0].entryId }, (bit<32>)NB_CELLS);
+                // Read entry from hash table
+                database.read(tmpTuple, (bit<32>)hashedKey);
+                secondAttr = tmpTuple[63:32];
+                thirdAttr = tmpTuple[31:0];
+
+                log_msg("Retrieved entry {}, secondAttr {}, thirdAttr {}", {hdr.db_entries[0].entryId, secondAttr, thirdAttr});
+            }
         }
     }
 }

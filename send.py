@@ -55,14 +55,19 @@ bind_layers(DBEntry, UDP, bos=1)
 
 def main():
 
-    if len(sys.argv)<3:
-        print('pass 2 arguments: <destination> "<message>"')
+    if len(sys.argv)<4:
+        print('pass 3 arguments: <destination> <isJoin> "<message>"')
+        print('<isJoin> should be this packet used for join operation or to fill the hash table? 1 for yes or 0 for no')
         exit(1)
 
     addr = socket.gethostbyname(sys.argv[1])
     iface = get_if()
+    isFlush = 0x1
+    print(sys.argv[2])
+    if sys.argv[2] == "1":
+        isFlush = 0x0
 
-    pkt = Ether(src=get_if_hwaddr(iface), dst="ff:ff:ff:ff:ff:ff") / IP(dst=addr, proto=0xFA) / DBRelation(relationId=0x1, flush=0x1)
+    pkt = Ether(src=get_if_hwaddr(iface), dst="ff:ff:ff:ff:ff:ff") / IP(dst=addr, proto=0xFA) / DBRelation(relationId=0x1, flush=isFlush)
     i = 0
     for p in range(0,10):
         entityId = random.randint(0, 1000)
@@ -77,7 +82,7 @@ def main():
     if pkt.haslayer(DBEntry):
         pkt.getlayer(DBEntry, i).bos = 1
         
-    pkt = pkt / UDP(dport=4321, sport=1234) / sys.argv[2]
+    pkt = pkt / UDP(dport=4321, sport=1234) / sys.argv[3]
 
     pkt.show2()
     try:
