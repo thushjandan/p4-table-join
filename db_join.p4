@@ -2,6 +2,8 @@
 #include <core.p4>
 #include <v1model.p4>
 
+#define PKT_INSTANCE_TYPE_RESUBMIT 6
+
 /* Max tuples within a packet */
 #define MAX_DB_ENTRY 16
 /* Max hash table cells */
@@ -51,8 +53,13 @@ header db_entry_t {
     bit<32>   thirdAttr;
 }
 
+struct db_entry_metadata_t {
+    @field_list(1)
+    bit<16>  nextIndex;
+}
+
 struct metadata {
-    /* empty */
+    db_entry_metadata_t     dbEntry_meta;
 }
 
 struct headers {
@@ -95,6 +102,7 @@ parser MyParser(packet_in packet,
     /* Parse the relation id */ 
     state parse_relation {
         packet.extract(hdr.db_relation);
+        meta.dbEntry_meta.nextIndex = 0;
         transition parse_entries;
     }
 
@@ -145,15 +153,19 @@ control MyIngress(inout headers hdr,
     action db_update() {
         bit<16> hashedKey = 0;
         bit<64> tmpTuple = 0;
+        bit<16> currentIndex = 0;
 
-        tmpTuple[63:32] = hdr.db_entries[0].secondAttr;
-        tmpTuple[31:0] = hdr.db_entries[0].thirdAttr;
+        currentIndex = meta.dbEntry_meta.nextIndex;
 
-        hash(hashedKey, HashAlgorithm.crc16, (bit<32>)0, { hdr.db_entries[0].entryId }, (bit<32>)NB_CELLS);
-        log_msg("Hashing an entry {} from {}", {hashedKey, hdr.db_entries[0].entryId});
+        tmpTuple[63:32] = hdr.db_entries[currentIndex].secondAttr;
+        tmpTuple[31:0] = hdr.db_entries[currentIndex].thirdAttr;
+
+        hash(hashedKey, HashAlgorithm.crc16, (bit<32>)0, { hdr.db_entries[currentIndex].entryId }, (bit<32>)NB_CELLS);
+        log_msg("Hashing an entry {} from {}", {hashedKey, hdr.db_entries[currentIndex].entryId});
         // Add entry in hash table
         database.write((bit<32>)hashedKey, tmpTuple);
         hdr.db_entries.pop_front(1);
+        meta.dbEntry_meta.nextIndex = currentIndex + 1;
     }
 
     action lock_database() {
@@ -176,17 +188,23 @@ control MyIngress(inout headers hdr,
     }
 
     apply {
+        bit<16> currentIndex = meta.dbEntry_meta.nextIndex;
 
         if (hdr.ipv4.isValid()) {
             ipv4_lpm.apply();
         }
         if (hdr.db_entries[0].isValid()) {
+            log_msg("Validating header of {}", {hdr.db_entries[currentIndex].entryId});
             bit<1> databaseLocked;
             databaseControl.read(databaseLocked, (bit<32>)0);
 
             if (hdr.db_relation.flush == 1 && databaseLocked == 0) {
                 lock_database();
                 db_update();
+                log_msg("First processing the packet and instance type is {}", {standard_metadata.instance_type});
+                if (hdr.db_entries[0].isValid() && standard_metadata.instance_type != PKT_INSTANCE_TYPE_RESUBMIT) {
+                    resubmit_preserving_field_list(1);
+                }
             }
 
             if (hdr.db_relation.flush == 1 && databaseLocked == 1) {
@@ -208,6 +226,12 @@ control MyIngress(inout headers hdr,
 
                 log_msg("Retrieved entry {}, secondAttr {}, thirdAttr {}", {hdr.db_entries[0].entryId, secondAttr, thirdAttr});
             }
+            if (standard_metadata.instance_type != PKT_INSTANCE_TYPE_RESUBMIT) {
+                log_msg("Resubmitted packet");
+            } else {
+                log_msg("First processing the packet");
+            }
+
         }
     }
 }
