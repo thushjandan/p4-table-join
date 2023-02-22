@@ -136,11 +136,6 @@ control MyVerifyChecksum(inout headers hdr, inout metadata meta) {
 control MyIngress(inout headers hdr,
                   inout metadata meta,
                   inout standard_metadata_t standard_metadata) {
-    
-    // Initialize hash table
-    register<bit<64>>(NB_CELLS) database;
-    register<bit<1>>(1) databaseControl;
-    register<bit<7>>(1) relationIdRegister;
 
     action drop() {
         mark_to_drop(standard_metadata);
@@ -152,30 +147,6 @@ control MyIngress(inout headers hdr,
         hdr.ethernet.dstAddr = dstAddr;
         hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
     }
-
-    action db_update() {
-        bit<16> hashedKey = 0;
-        bit<64> tmpTuple = 0;
-        bit<16> currentIndex = 0;
-
-        currentIndex = meta.dbEntry_meta.nextIndex;
-
-        tmpTuple[63:32] = hdr.db_entries[currentIndex].secondAttr;
-        tmpTuple[31:0] = hdr.db_entries[currentIndex].thirdAttr;
-
-        hash(hashedKey, HashAlgorithm.crc16, (bit<32>)0, { hdr.db_entries[currentIndex].entryId }, (bit<32>)NB_CELLS);
-        log_msg("Hashing an entry {} from {}", {hashedKey, hdr.db_entries[currentIndex].entryId});
-        // Add entry in hash table
-        database.write((bit<32>)hashedKey, tmpTuple);
-        hdr.db_entries.pop_front(1);
-        meta.dbEntry_meta.nextIndex = currentIndex + 1;
-    }
-
-    action lock_database() {
-        databaseControl.write((bit<32>)0, 1);
-        relationIdRegister.write((bit<32>)0, hdr.db_relation.relationId);
-    }
-
 
     table ipv4_lpm {
         key = {
@@ -191,12 +162,53 @@ control MyIngress(inout headers hdr,
     }
 
     apply {
-        bit<16> currentIndex = meta.dbEntry_meta.nextIndex;
 
         if (hdr.ipv4.isValid()) {
             ipv4_lpm.apply();
         }
         
+    }
+}
+
+/*************************************************************************
+****************  E G R E S S   P R O C E S S I N G   *******************
+*************************************************************************/
+
+control MyEgress(inout headers hdr,
+                 inout metadata meta,
+                 inout standard_metadata_t standard_metadata) {
+    
+    // Initialize hash table
+    register<bit<64>>(NB_CELLS) database;
+    register<bit<1>>(1) databaseControl;
+    register<bit<7>>(1) relationIdRegister;
+
+        action db_update() {
+        bit<16> hashedKey = 0;
+        bit<64> tmpTuple = 0;
+        bit<16> currentIndex = 0;
+
+        currentIndex = 0;
+
+        tmpTuple[63:32] = hdr.db_entries[currentIndex].secondAttr;
+        tmpTuple[31:0] = hdr.db_entries[currentIndex].thirdAttr;
+
+        hash(hashedKey, HashAlgorithm.crc16, (bit<32>)0, { hdr.db_entries[currentIndex].entryId }, (bit<32>)NB_CELLS);
+        log_msg("Hashing an entry {} from {}", {hashedKey, hdr.db_entries[currentIndex].entryId});
+        // Add entry in hash table
+        database.write((bit<32>)hashedKey, tmpTuple);
+        hdr.db_entries.pop_front(1);
+        meta.dbEntry_meta.nextIndex = meta.dbEntry_meta.nextIndex + 1;
+    }
+
+    action lock_database() {
+        databaseControl.write((bit<32>)0, 1);
+        relationIdRegister.write((bit<32>)0, hdr.db_relation.relationId);
+    }
+
+    apply {
+        bit<16> currentIndex = meta.dbEntry_meta.nextIndex;
+
         if (hdr.db_entries[0].isValid()) {
             log_msg("Validating header of {}", {hdr.db_entries[currentIndex].entryId});
             bit<1> databaseLocked;
@@ -208,7 +220,7 @@ control MyIngress(inout headers hdr,
                 log_msg("After increment of nextIndex {}", {meta.dbEntry_meta.nextIndex});
                 log_msg("First processing the packet and instance type is {}", {standard_metadata.instance_type});
                 if (hdr.db_entries[0].isValid() && standard_metadata.instance_type != PKT_INSTANCE_TYPE_RESUBMIT) {
-                    resubmit_preserving_field_list((bit<8>)FieldLists.resubmit_FL);
+                    recirculate_preserving_field_list((bit<8>)FieldLists.resubmit_FL);
                 }
             }
 
@@ -239,17 +251,8 @@ control MyIngress(inout headers hdr,
             }
 
         }
+
     }
-}
-
-/*************************************************************************
-****************  E G R E S S   P R O C E S S I N G   *******************
-*************************************************************************/
-
-control MyEgress(inout headers hdr,
-                 inout metadata meta,
-                 inout standard_metadata_t standard_metadata) {
-    apply {  }
 }
 
 /*************************************************************************
