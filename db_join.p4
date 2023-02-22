@@ -12,6 +12,10 @@
 const bit<16> TYPE_IPV4 = 0x800;
 const bit<8> TYPE_MYP4DB = 0xFA;
 
+enum bit<8> FieldLists {
+    resubmit_FL = 0
+}
+
 /*************************************************************************
 *********************** H E A D E R S  ***********************************
 *************************************************************************/
@@ -54,7 +58,7 @@ header db_entry_t {
 }
 
 struct db_entry_metadata_t {
-    @field_list(1)
+    @field_list(FieldLists.resubmit_FL)
     bit<16>  nextIndex;
 }
 
@@ -102,7 +106,6 @@ parser MyParser(packet_in packet,
     /* Parse the relation id */ 
     state parse_relation {
         packet.extract(hdr.db_relation);
-        meta.dbEntry_meta.nextIndex = 0;
         transition parse_entries;
     }
 
@@ -193,6 +196,7 @@ control MyIngress(inout headers hdr,
         if (hdr.ipv4.isValid()) {
             ipv4_lpm.apply();
         }
+        
         if (hdr.db_entries[0].isValid()) {
             log_msg("Validating header of {}", {hdr.db_entries[currentIndex].entryId});
             bit<1> databaseLocked;
@@ -201,14 +205,16 @@ control MyIngress(inout headers hdr,
             if (hdr.db_relation.flush == 1 && databaseLocked == 0) {
                 lock_database();
                 db_update();
+                log_msg("After increment of nextIndex {}", {meta.dbEntry_meta.nextIndex});
                 log_msg("First processing the packet and instance type is {}", {standard_metadata.instance_type});
                 if (hdr.db_entries[0].isValid() && standard_metadata.instance_type != PKT_INSTANCE_TYPE_RESUBMIT) {
-                    resubmit_preserving_field_list(1);
+                    resubmit_preserving_field_list((bit<8>)FieldLists.resubmit_FL);
                 }
             }
 
             if (hdr.db_relation.flush == 1 && databaseLocked == 1) {
                 db_update();
+                meta.dbEntry_meta.nextIndex = currentIndex + 1;
             }
 
             if (hdr.db_relation.flush == 0 && databaseLocked == 1) {
