@@ -11,6 +11,7 @@
 
 const bit<16> TYPE_IPV4 = 0x800;
 const bit<8> TYPE_MYP4DB = 0xFA;
+const bit<8> TYPE_UDP = 0x17;
 
 enum bit<8> FieldLists {
     resubmit_FL = 0
@@ -210,23 +211,16 @@ control MyEgress(inout headers hdr,
         bit<16> currentIndex = meta.dbEntry_meta.nextIndex;
 
         if (hdr.db_entries[0].isValid()) {
-            log_msg("Validating header of {}", {hdr.db_entries[currentIndex].entryId});
+            log_msg("Validating header of {}", {hdr.db_entries[0].entryId});
             bit<1> databaseLocked;
+            bit<1> bosReached = hdr.db_entries[0].bos;
             databaseControl.read(databaseLocked, (bit<32>)0);
 
-            if (hdr.db_relation.flush == 1 && databaseLocked == 0) {
-                lock_database();
-                db_update();
-                log_msg("After increment of nextIndex {}", {meta.dbEntry_meta.nextIndex});
-                log_msg("First processing the packet and instance type is {}", {standard_metadata.instance_type});
-                if (hdr.db_entries[0].isValid() && standard_metadata.instance_type != PKT_INSTANCE_TYPE_RESUBMIT) {
-                    recirculate_preserving_field_list((bit<8>)FieldLists.resubmit_FL);
+            if (hdr.db_relation.flush == 1) {
+                if (databaseLocked == 0) {
+                    lock_database();
                 }
-            }
-
-            if (hdr.db_relation.flush == 1 && databaseLocked == 1) {
                 db_update();
-                meta.dbEntry_meta.nextIndex = currentIndex + 1;
             }
 
             if (hdr.db_relation.flush == 0 && databaseLocked == 1) {
@@ -244,10 +238,11 @@ control MyEgress(inout headers hdr,
 
                 log_msg("Retrieved entry {}, secondAttr {}, thirdAttr {}", {hdr.db_entries[0].entryId, secondAttr, thirdAttr});
             }
-            if (standard_metadata.instance_type != PKT_INSTANCE_TYPE_RESUBMIT) {
-                log_msg("Resubmitted packet");
-            } else {
-                log_msg("First processing the packet");
+            if (hdr.db_entries[0].isValid() && bosReached != 1) {
+                recirculate_preserving_field_list((bit<8>)FieldLists.resubmit_FL);
+            }
+            if (bosReached == 1) {
+                hdr.ipv4.protocol = TYPE_UDP;
             }
 
         }
