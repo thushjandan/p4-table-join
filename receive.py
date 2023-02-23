@@ -9,7 +9,8 @@ from scapy.all import (
     Packet,
     BitField,
     get_if_list,
-    sniff
+    sniff,
+    conf
 )
 from scapy.layers.inet import _IPOption_HDR
 
@@ -34,18 +35,31 @@ class DBEntry(Packet):
         IntField("thirdAttr", 0),
     ]
 
+class DBReplyEntry(Packet):
+    fields_desc = [ 
+        BitField("bos", 0, 1),
+        BitField("entryId", 0, 31),
+        IntField("secondAttr", 0),
+        IntField("thirdAttr", 0),
+        IntField("forthAttr", 0),
+        IntField("fifthAttr", 0),
+    ]
+
 class DBRelation(Packet):
     name = "MYP4DB_Relation"
     fields_desc = [ 
         BitField("relationId", 0, 6),
-        BitField("isFlush", 0, 1)
+        BitField("isFlush", 0, 1),
         BitField("isReply", 0, 1)
     ]
 
 bind_layers(IP, DBRelation, proto=0xFA)
-bind_layers(DBRelation, DBEntry)
+bind_layers(DBRelation, DBEntry, isReply=0x0)
+bind_layers(DBRelation, DBReplyEntry, isReply=0x1)
 bind_layers(DBEntry, DBEntry, bos=0)
 bind_layers(DBEntry, UDP, bos=1)
+bind_layers(DBReplyEntry, DBReplyEntry, bos=0)
+bind_layers(DBReplyEntry, UDP, bos=1)
 
 def handle_pkt(pkt):
     print("got a packet")
@@ -57,6 +71,8 @@ def main():
     iface = 'eth0'
     print("sniffing on %s" % iface)
     sys.stdout.flush()
+    conf.verb = 3
+    conf.debug_dissector = True
     sniff(filter="proto 250", iface = iface,
           prn = lambda x: handle_pkt(x))
 

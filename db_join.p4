@@ -130,8 +130,15 @@ parser MyParser(packet_in packet,
     state parse_entries {
         packet.extract(hdr.db_entries.next);
         transition select(hdr.db_entries.last.bos) {
-            1       : accept;
+            1       : parse_temp_reply_entries;
             default : parse_entries;
+        }
+    }
+
+    state parse_temp_reply_entries {
+        transition select(meta.dbEntry_meta.containsReply) {
+            true    : parse_reply_entries;
+            false   : accept;
         }
     }
 
@@ -261,21 +268,31 @@ control MyEgress(inout headers hdr,
                 thirdAttr = tmpTuple[31:0];
                 meta.dbEntry_meta.containsReply = true;
                 // Add new entry in metadata
-                /*
-                meta.db_reply_meta.push_front(1);
-                meta.db_reply_meta[0].secondAttr = hdr.db_entries[0].secondAttr;
-                meta.db_reply_meta[0].thirdAttr = hdr.db_entries[0].thirdAttr;
-                meta.db_reply_meta[0].forthAttr = secondAttr;
-                meta.db_reply_meta[0].fifthAttr = thirdAttr;
-                */
+                hdr.db_reply_entries.push_front(1);
+                hdr.db_reply_entries[0].setValid();
+                hdr.db_reply_entries[0].bos = 0;
+                if (hdr.db_reply_entries[1].isValid() == false) {
+                    hdr.db_reply_entries[0].bos = 1;
+                    log_msg("Det bos for reply entry {}", {hdr.db_entries[0].entryId});
+                }
+                hdr.db_reply_entries[0].entryId = hdr.db_entries[0].entryId;
+                hdr.db_reply_entries[0].secondAttr = hdr.db_entries[0].secondAttr;
+                hdr.db_reply_entries[0].thirdAttr = hdr.db_entries[0].thirdAttr;
+                hdr.db_reply_entries[0].forthAttr = secondAttr;
+                hdr.db_reply_entries[0].fifthAttr = thirdAttr;
                 log_msg("Retrieved entry {}, secondAttr {}, thirdAttr {}", {hdr.db_entries[0].entryId, secondAttr, thirdAttr});
+                hdr.db_entries.pop_front(1);
             }
 
             if (hdr.db_entries[0].isValid() && bosReached != 1) {
                 recirculate_preserving_field_list((bit<8>)FieldLists.resubmit_FL);
             }
             if (bosReached == 1) {
-                hdr.ipv4.protocol = TYPE_UDP;
+                if (meta.dbEntry_meta.containsReply != true) {
+                    hdr.ipv4.protocol = TYPE_UDP;
+                } else {
+                    hdr.db_relation.isReply = 1;
+                }
             }
 
         }
@@ -317,6 +334,7 @@ control MyDeparser(packet_out packet, in headers hdr) {
         packet.emit(hdr.ipv4);
         packet.emit(hdr.db_relation);
         packet.emit(hdr.db_entries);
+        packet.emit(hdr.db_reply_entries);
     }
 }
 

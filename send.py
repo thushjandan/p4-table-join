@@ -45,7 +45,7 @@ class DBRelation(Packet):
     name = "MYP4DB_Relation"
     fields_desc = [ 
         BitField("relationId", 0, 6),
-        BitField("isFlush", 0, 1)
+        BitField("isFlush", 0, 1),
         BitField("isReply", 0, 1)
     ]
 
