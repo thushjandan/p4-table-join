@@ -47,8 +47,9 @@ header ipv4_t {
 }
 
 header db_relation_t {
-    bit<7>  relationId;
+    bit<6>  relationId;
     bit<1>  flush;
+    bit<1>  isReply;
 }
 
 header db_entry_t {
@@ -58,9 +59,20 @@ header db_entry_t {
     bit<32>   thirdAttr;
 }
 
+header db_reply_entry_t {
+    bit<1>    bos;
+    bit<31>   entryId;
+    bit<32>   secondAttr;
+    bit<32>   thirdAttr;
+    bit<32>   forthAttr;
+    bit<32>   fifthAttr;
+}
+
 struct db_entry_metadata_t {
     @field_list(FieldLists.resubmit_FL)
     bit<16>  nextIndex;
+    @field_list(FieldLists.resubmit_FL)
+    bool                    containsReply;
 }
 
 struct metadata {
@@ -68,10 +80,11 @@ struct metadata {
 }
 
 struct headers {
-    ethernet_t                  ethernet;
-    ipv4_t                      ipv4;
-    db_relation_t               db_relation;
-    db_entry_t[MAX_DB_ENTRY]    db_entries;
+    ethernet_t                      ethernet;
+    ipv4_t                          ipv4;
+    db_relation_t                   db_relation;
+    db_entry_t[MAX_DB_ENTRY]        db_entries;
+    db_reply_entry_t[MAX_DB_ENTRY]  db_reply_entries;
 
 }
 
@@ -107,7 +120,10 @@ parser MyParser(packet_in packet,
     /* Parse the relation id */ 
     state parse_relation {
         packet.extract(hdr.db_relation);
-        transition parse_entries;
+        transition select(hdr.db_relation.isReply) {
+            0       : parse_entries;
+            default : parse_reply_entries;
+        }
     }
 
     /* Parse all the headers in the entries header stack until bottom of the stack has reached */
@@ -119,6 +135,13 @@ parser MyParser(packet_in packet,
         }
     }
 
+    state parse_reply_entries {
+        packet.extract(hdr.db_reply_entries.next);
+        transition select(hdr.db_reply_entries.last.bos) {
+            1       : accept;
+            default : parse_reply_entries;
+        }
+    }
 }
 
 /*************************************************************************
@@ -182,9 +205,9 @@ control MyEgress(inout headers hdr,
     // Initialize hash table
     register<bit<64>>(NB_CELLS) database;
     register<bit<1>>(1) databaseControl;
-    register<bit<7>>(1) relationIdRegister;
+    register<bit<6>>(1) relationIdRegister;
 
-        action db_update() {
+    action db_update() {
         bit<16> hashedKey = 0;
         bit<64> tmpTuple = 0;
         bit<16> currentIndex = 0;
@@ -213,17 +236,18 @@ control MyEgress(inout headers hdr,
         if (hdr.db_entries[0].isValid()) {
             log_msg("Validating header of {}", {hdr.db_entries[0].entryId});
             bit<1> databaseLocked;
+            bit<6> db_relationId;
             bit<1> bosReached = hdr.db_entries[0].bos;
             databaseControl.read(databaseLocked, (bit<32>)0);
 
-            if (hdr.db_relation.flush == 1) {
-                if (databaseLocked == 0) {
-                    lock_database();
-                }
-                db_update();
+            if (databaseLocked == 0) {
+                lock_database();
             }
-
-            if (hdr.db_relation.flush == 0 && databaseLocked == 1) {
+            relationIdRegister.read(db_relationId, (bit<32>)0);
+            if (db_relationId == hdr.db_relation.relationId || hdr.db_relation.flush == 1) {
+                meta.dbEntry_meta.containsReply = false;
+                db_update();
+            } else {
 
                 bit<16> hashedKey = 0;
                 bit<64> tmpTuple = 0;
@@ -235,9 +259,18 @@ control MyEgress(inout headers hdr,
                 database.read(tmpTuple, (bit<32>)hashedKey);
                 secondAttr = tmpTuple[63:32];
                 thirdAttr = tmpTuple[31:0];
-
+                meta.dbEntry_meta.containsReply = true;
+                // Add new entry in metadata
+                /*
+                meta.db_reply_meta.push_front(1);
+                meta.db_reply_meta[0].secondAttr = hdr.db_entries[0].secondAttr;
+                meta.db_reply_meta[0].thirdAttr = hdr.db_entries[0].thirdAttr;
+                meta.db_reply_meta[0].forthAttr = secondAttr;
+                meta.db_reply_meta[0].fifthAttr = thirdAttr;
+                */
                 log_msg("Retrieved entry {}, secondAttr {}, thirdAttr {}", {hdr.db_entries[0].entryId, secondAttr, thirdAttr});
             }
+
             if (hdr.db_entries[0].isValid() && bosReached != 1) {
                 recirculate_preserving_field_list((bit<8>)FieldLists.resubmit_FL);
             }
