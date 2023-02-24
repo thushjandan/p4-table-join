@@ -72,7 +72,7 @@ header db_reply_entry_t {
 }
 
 struct db_entry_metadata_t {
-    /* Preserve containsReply within recirculate pipeline 
+    /* Preserve containsReply flag within recirculate pipeline 
     * to distinguish if there is an additional reply header stack
     */
     @field_list(FieldLists.resubmit_FL)
@@ -130,8 +130,8 @@ parser MyParser(packet_in packet,
         }
     }
 
-    /*  Parse all the headers in the entries header stack until bottom of the stack has reached.
-    *   In case, there are temporary reply entries added after bottom of stack has reached, go
+    /*  Parse all the headers in the db_entries header stack until bottom of stack has reached.
+    *   In case, there are temporary reply entries added after bottom of stack, go
     *   to parse_temp_reply_entries state to distinguish if further parsing is required.
     */
     state parse_entries {
@@ -225,7 +225,7 @@ control MyEgress(inout headers hdr,
     
     // Initialize hash table
     register<bit<64>>(NB_CELLS) database;
-    // Database control registers.
+    // Database control registers. Used to store the name of the relation
     register<bit<7>>(1) relationIdRegister;
 
     /*
@@ -235,7 +235,7 @@ control MyEgress(inout headers hdr,
         bit<16> hashedKey = 0;
         bit<64> tmpTuple = 0;
 
-        // Encode all the attributes to a single field.
+        // Encode all the attributes into a single field.
         tmpTuple[63:32] = hdr.db_entries[0].secondAttr;
         tmpTuple[31:0] = hdr.db_entries[0].thirdAttr;
 
@@ -280,7 +280,7 @@ control MyEgress(inout headers hdr,
             // If the relationId in the packet is the same from the register, then add entries
             // otherwise it is an INNER JOIN operation
             if (db_relationId == hdr.db_relation.relationId) {
-                // Operation to add insert entries
+                // Operation to insert entries
                 meta.dbEntry_meta.containsReply = false;
                 db_update();
                 dec_length_of_dbentry();
@@ -295,10 +295,11 @@ control MyEgress(inout headers hdr,
                 hash(hashedKey, HashAlgorithm.crc16, (bit<32>)0, { hdr.db_entries[0].entryId }, (bit<32>)NB_CELLS);
                 // Read entry from hash table
                 database.read(tmpTuple, (bit<32>)hashedKey);
+                // Decode the value from the register
                 secondAttr = tmpTuple[63:32];
                 thirdAttr = tmpTuple[31:0];
                 // Check if primary key has been found
-                // If we register is fully 0, then we assume that there weren't any entries for that key
+                // If the value from the register is 0, then we assume that there weren't any entries for that key.
                 if (secondAttr != 0 && thirdAttr != 0) {
                     // Primary key exists in hash table. Do the JOIN
                     meta.dbEntry_meta.containsReply = true;
@@ -327,7 +328,7 @@ control MyEgress(inout headers hdr,
             }
 
             // If we haven't reached the bottom of stack of the db_entries header stack,
-            // then we recirculate this modified packet again to loop over whole the header stack.
+            // then we recirculate this modified packet again to loop over the whole header stack.
             if (hdr.db_entries[0].isValid() && bosReached != 1) {
                 recirculate_preserving_field_list((bit<8>)FieldLists.resubmit_FL);
             }
@@ -335,9 +336,10 @@ control MyEgress(inout headers hdr,
             if (bosReached == 1) {
                 // If we have reached the bottom of stack, check if we have added any reply headers
                 if (meta.dbEntry_meta.containsReply != true) {
-                    // If there are not reply headers, then remove the relation header and set the next protocol has UDP
+                    // If there are not any reply headers, then remove the relation header and set the next protocol to UDP
                     hdr.ipv4.protocol = TYPE_UDP;
                     hdr.db_relation.setInvalid();
+                    // Decrement IPv4 length as we have removed the db_relation header.
                     hdr.ipv4.totalLen = hdr.ipv4.totalLen - 1;
                 } else {
                     // If our header stack contains a reply, then set the flag in the relation header.
