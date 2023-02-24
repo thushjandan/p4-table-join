@@ -73,7 +73,7 @@ def main():
     sys.stdout.flush()
     conf.verb = 3
     conf.debug_dissector = True
-    sniff(filter="proto 250", iface = iface,
+    sniff(filter="proto (250 or 17)", iface = iface,
           prn = lambda x: handle_pkt(x))
 
 if __name__ == '__main__':

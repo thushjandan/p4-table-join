@@ -11,7 +11,7 @@
 
 const bit<16> TYPE_IPV4 = 0x800;
 const bit<8> TYPE_MYP4DB = 0xFA;
-const bit<8> TYPE_UDP = 0x17;
+const bit<8> TYPE_UDP = 0x11;
 
 enum bit<8> FieldLists {
     resubmit_FL = 0
@@ -254,6 +254,7 @@ control MyEgress(inout headers hdr,
             if (db_relationId == hdr.db_relation.relationId || hdr.db_relation.flush == 1) {
                 meta.dbEntry_meta.containsReply = false;
                 db_update();
+                hdr.ipv4.totalLen = hdr.ipv4.totalLen - 12;
             } else {
 
                 bit<16> hashedKey = 0;
@@ -271,9 +272,9 @@ control MyEgress(inout headers hdr,
                 hdr.db_reply_entries.push_front(1);
                 hdr.db_reply_entries[0].setValid();
                 hdr.db_reply_entries[0].bos = 0;
+                // Set bos only on the first entry as it will be moved to the end.
                 if (hdr.db_reply_entries[1].isValid() == false) {
                     hdr.db_reply_entries[0].bos = 1;
-                    log_msg("Det bos for reply entry {}", {hdr.db_entries[0].entryId});
                 }
                 hdr.db_reply_entries[0].entryId = hdr.db_entries[0].entryId;
                 hdr.db_reply_entries[0].secondAttr = hdr.db_entries[0].secondAttr;
@@ -282,6 +283,7 @@ control MyEgress(inout headers hdr,
                 hdr.db_reply_entries[0].fifthAttr = thirdAttr;
                 log_msg("Retrieved entry {}, secondAttr {}, thirdAttr {}", {hdr.db_entries[0].entryId, secondAttr, thirdAttr});
                 hdr.db_entries.pop_front(1);
+                hdr.ipv4.totalLen = hdr.ipv4.totalLen + 8;
             }
 
             if (hdr.db_entries[0].isValid() && bosReached != 1) {
@@ -290,6 +292,8 @@ control MyEgress(inout headers hdr,
             if (bosReached == 1) {
                 if (meta.dbEntry_meta.containsReply != true) {
                     hdr.ipv4.protocol = TYPE_UDP;
+                    hdr.db_relation.setInvalid();
+                    hdr.ipv4.totalLen = hdr.ipv4.totalLen - 1;
                 } else {
                     hdr.db_relation.isReply = 1;
                 }
