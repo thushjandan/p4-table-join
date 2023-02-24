@@ -2,11 +2,11 @@
 This P4 application is a toy example, which implements a table join between two relations within the dataplane. BMv2 & Mininet are used to run this P4 app.
 
 ## Overview
-Let's assume we have two tables/relations called R and S and they have each three (unsigned) integer attributes.
+Let's assume we have two tables/relations called `R` and `S` and they have each three (unsigned) integer attributes.
 
-First we pump the table R with random numbers to the switch. The switch will store these tuples in a hash table using `extern register`.
+First we pump the table `R` with random numbers to the switch. The switch will store these tuples in a hash table using `extern register`.
 
-First we pump the table S with random numbers to the switch. The switch will recognized the table S and will do an INNER JOIN with table R.
+Then we pump the table `S` with random numbers to the switch. The switch will recognized the table `S` and will do an INNER JOIN with table `R`.
 
 ### Example
 **Relation R**
@@ -32,10 +32,15 @@ First we pump the table S with random numbers to the switch. The switch will rec
 | 789      | 685        | 145       | 74        | 315       |
 
 ## How to build
-Start the P4 application
+Build a vagrant box with all the necessary tools installed for P4 development using the scripts from the [p4lang/tutorials](https://github.com/p4lang/tutorials/tree/master/vm-ubuntu-20.04) repo.
+
+Afterwards, start the P4 application as follows:
 ```bash
 $ make
 ```
+It will build the P4 app and start mininet with 1 bmv2 switch and 2 end host.
+
+### How to stop
 First, `exit` from the mininet console and stop the app:
 ```
 make stop
@@ -44,12 +49,12 @@ make clean
 ```
 
 ## Design
-After the IPv4 header, the [MYP4DB_Relation](#relational-header-myp4db_relation) will be appended, which contains the metadata for a relation and control flags. 
-A header stack of type `DBEntry` will follow for every tuple.
+After the IPv4 header, the [MYP4DB_Relation](#relational-header-myp4db_relation) header will be appended, which contains the metadata for a relation and control flags. IPv4 protocol number 0xFA (250) is used to indicate that header.
+A header stack of type [DBEntry](#request-tuple-dbentry) will follow for every tuple.
 
-The switch will process each tuple from the header stack. If the switch decides to store the relation in case of an empty hash table, it will remove the whole header stack as well as MYP4DB_Relation header at the end. So, the receiver will only receive the UDP packet consisting of Ethernet & IPv4 headers.
+The switch will process each tuple from the header stack. If the switch decides to store the relation in case of an empty hash table, it will remove the whole header stack as well as [MYP4DB_Relation](#relational-header-myp4db_relation) header at the end. So, the receiver will only receive the UDP packet consisting of Ethernet & IPv4 headers.
 
-In case the requested relation is a different from the stored relation, a INNER JOIN operation is assumed on the switch and a header stack of type `DBReplyEntry`, containing the joined tuples, is generated.
+In case the requested relation is a different from the relation stored on the switch, a INNER JOIN operation is assumed on the switch and a header stack of type [DBReplyEntry](#reply-tuple-joined-tuple), containing the joined tuples, is generated.
 
 ### Relational Header (MYP4DB_Relation)
 ```
@@ -59,6 +64,7 @@ In case the requested relation is a different from the stored relation, a INNER 
 |  relationId |replyJoinedR.|i|r|
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
+Total 2 bytes (16-bits)
 * relationId (7-bit): the name of the relation represented as an unsigned integer. 
 * replyJoinedRelation (7-bit): the name of the joined relation represented as an unsigned integer. The default is empty (0) and will only be used within a reply packet.
 * isReply (1-bit): indicates if it is a request or reply packet. 0 for request and 1 for reply.
@@ -75,11 +81,13 @@ In case the requested relation is a different from the stored relation, a INNER 
 |                           thirdAttr                           |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
+Total 12 bytes (96 bits) per entry
 * bos (1-bit): indicates if bottom of stack has reached. 1 if bos has reached, otherwise 0
 * entryId (31-bit): primary key represented as an unsigned integer.
 * secondAttr (32-bit): Second attribute of the tuple represented as an unsigned integer.
 * thirdAttr (32-bit): Third attribute of the tuple represented as an unsigned integer.
 ### Reply Tuple (Joined tuple)
+Total 20 bytes (160 bits) per entry
 ```
  0                   1                   2                   3
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
@@ -119,9 +127,9 @@ h1> ./send.py 10.0.2.2 "P4 is cool"
 ```
 
 ### Example output
-Following 2 packets will be sent from h1. All the entries in the first packet will be stored in the hash table of the switch. The second request will trigger a INNER JOIN on the switch and h2 will get all the joined records.
+Two packets will be sent from h1. All the entries in the first packet will be stored in the hash table of the switch. The second request will trigger a INNER JOIN on the switch and h2 will get all the joined records.
 
-A long story short, all the joined tuples (INNER JOIN) can be found in the DBReplyEntry header stack [see here](#retrieved-packets-on-h2).
+Long story short, all the joined tuples (INNER JOIN) can be found in the DBReplyEntry header stack => [see here](#retrieved-packets-on-h2).
 #### Sent packets on h1
 ```
 ###[ Ethernet ]### 
@@ -394,4 +402,4 @@ Sent 1 packets.
 ```
 
 ## References
-This repository is using parts of the [p4lang/tutorials](https://github.com/p4lang/tutorials) repository to bootstrap the application.
+This repository is using parts of the [p4lang/tutorials](https://github.com/p4lang/tutorials) repository to build and start the P4 application.
