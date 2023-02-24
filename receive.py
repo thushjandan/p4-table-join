@@ -10,10 +10,7 @@ from scapy.all import (
     BitField,
     get_if_list,
     sniff,
-    conf
 )
-from scapy.layers.inet import _IPOption_HDR
-
 
 def get_if():
     ifs=get_if_list()
@@ -54,12 +51,19 @@ class DBRelation(Packet):
         BitField("reserved", 0, 1),
     ]
 
+# IP proto 250 indicates MYP4DB_Relation
 bind_layers(IP, DBRelation, proto=0xFA)
+# If isReply is not set, then DBEntry follows (request packet)
 bind_layers(DBRelation, DBEntry, isReply=0x0)
+# If isReply is set, then it is a reply packet.
 bind_layers(DBRelation, DBReplyEntry, isReply=0x1)
+# Recursively bind to the same type as long bottom of stack has not reached
 bind_layers(DBEntry, DBEntry, bos=0)
+# If bottom of stack has reached, then UDP header will follow
 bind_layers(DBEntry, UDP, bos=1)
+# Recursively bind to the same type as long bottom of stack has not reached
 bind_layers(DBReplyEntry, DBReplyEntry, bos=0)
+# If bottom of stack has reached, then UDP header will follow
 bind_layers(DBReplyEntry, UDP, bos=1)
 
 def handle_pkt(pkt):
@@ -72,8 +76,7 @@ def main():
     iface = 'eth0'
     print("sniffing on %s" % iface)
     sys.stdout.flush()
-    conf.verb = 3
-    conf.debug_dissector = True
+    # Listen on MYP4DB_Relation and UDP packets
     sniff(filter="proto (250 or 17)", iface = iface,
           prn = lambda x: handle_pkt(x))
 

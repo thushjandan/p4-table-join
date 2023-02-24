@@ -2,7 +2,7 @@
 This P4 application is a toy example, which implements a table join between two relations within the dataplane. BMv2 & Mininet are used to run this P4 app.
 
 ## Overview
-Let's assume we have two tables/relations called `R` and `S` and they have each three (unsigned) integer attributes.
+Let's assume we have two tables/relations, called `R` & `S`, and they have each three (unsigned) integer attributes.
 
 First we pump the table `R` with random numbers to the switch. The switch will store these tuples in a hash table using `extern register`.
 
@@ -109,7 +109,6 @@ Total 20 bytes (160 bits) per entry
 * thirdAttr (32-bit): Third attribute of the tuple represented as an unsigned integer.
 * forthAttr (32-bit): Forth attribute of the tuple represented as an unsigned integer.
 * fifthAttr (32-bit): Fifth attribute of the tuple represented as an unsigned integer.
-### Processing logic
 
 ## Example
 * Start the mininet simulator with bmv2 switch running our P4 code.
