@@ -47,9 +47,10 @@ class DBEntry(Packet):
 class DBRelation(Packet):
     name = "MYP4DB_Relation"
     fields_desc = [ 
-        BitField("relationId", 0, 6),
-        BitField("isFlush", 0, 1),
-        BitField("isReply", 0, 1)
+        BitField("relationId", 0, 7),
+        BitField("replyJoinedrelationId", 0, 7),
+        BitField("isReply", 0, 1),
+        BitField("reserved", 0, 1),
     ]
 
 bind_layers(IP, DBRelation, proto=0xFA)
@@ -60,7 +61,7 @@ bind_layers(DBEntry, UDP, bos=1)
 def generate_db_pkt(relationId, pick_random_entityId=False, isFlush=0):
     addr = socket.gethostbyname(sys.argv[1])
     iface = get_if()
-    pkt = Ether(src=get_if_hwaddr(iface), dst="ff:ff:ff:ff:ff:ff") / IP(dst=addr, proto=0xFA) / DBRelation(relationId=relationId, isFlush=isFlush, isReply=0)
+    pkt = Ether(src=get_if_hwaddr(iface), dst="ff:ff:ff:ff:ff:ff") / IP(dst=addr, proto=0xFA) / DBRelation(relationId=relationId, isReply=0)
     i = 0
     for p in range(0,NUMBER_ENTRIES):
         entityId = RANDOM_ENTITYIDS[i]

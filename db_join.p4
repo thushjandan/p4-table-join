@@ -49,9 +49,10 @@ header ipv4_t {
 }
 
 header db_relation_t {
-    bit<6>  relationId;
-    bit<1>  flush;
+    bit<7>  relationId;
+    bit<7>  replyJoinedRelationId;
     bit<1>  isReply;
+    bit<1>  reserved;
 }
 
 header db_entry_t {
@@ -225,7 +226,7 @@ control MyEgress(inout headers hdr,
     // Initialize hash table
     register<bit<64>>(NB_CELLS) database;
     // Database control registers.
-    register<bit<6>>(1) relationIdRegister;
+    register<bit<7>>(1) relationIdRegister;
 
     /*
     * Insert a single entry to the hash table.
@@ -264,7 +265,7 @@ control MyEgress(inout headers hdr,
     apply {
 
         if (hdr.db_entries[0].isValid()) {
-            bit<6> db_relationId;
+            bit<7> db_relationId;
             // Read out bottom of stack flag to figure out if we have reached the last entry.
             bit<1> bosReached = hdr.db_entries[0].bos;
 
@@ -278,7 +279,7 @@ control MyEgress(inout headers hdr,
 
             // If the relationId in the packet is the same from the register, then add entries
             // otherwise it is an INNER JOIN operation
-            if (db_relationId == hdr.db_relation.relationId || hdr.db_relation.flush == 1) {
+            if (db_relationId == hdr.db_relation.relationId) {
                 // Operation to add insert entries
                 meta.dbEntry_meta.containsReply = false;
                 db_update();
@@ -341,6 +342,7 @@ control MyEgress(inout headers hdr,
                 } else {
                     // If our header stack contains a reply, then set the flag in the relation header.
                     hdr.db_relation.isReply = 1;
+                    hdr.db_relation.replyJoinedRelationId = db_relationId;
                 }
             }
         }
