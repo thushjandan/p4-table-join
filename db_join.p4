@@ -13,6 +13,7 @@ const bit<16> TYPE_IPV4 = 0x800;
 const bit<8> TYPE_MYP4DB = 0xFA;
 const bit<8> TYPE_UDP = 0x11;
 
+/* Enum for tags to preserve fields within the recirculate pipeline */
 enum bit<8> FieldLists {
     resubmit_FL = 0
 }
@@ -24,6 +25,7 @@ enum bit<8> FieldLists {
 typedef bit<9>  egressSpec_t;
 typedef bit<48> macAddr_t;
 typedef bit<32> ip4Addr_t;
+typedef bit<32> db_attribute_t;
 
 header ethernet_t {
     macAddr_t dstAddr;
@@ -53,26 +55,27 @@ header db_relation_t {
 }
 
 header db_entry_t {
-    bit<1>    bos;
-    bit<31>   entryId;
-    bit<32>   secondAttr;
-    bit<32>   thirdAttr;
+    bit<1>          bos;
+    bit<31>         entryId;
+    db_attribute_t  secondAttr;
+    db_attribute_t  thirdAttr;
 }
 
 header db_reply_entry_t {
-    bit<1>    bos;
-    bit<31>   entryId;
-    bit<32>   secondAttr;
-    bit<32>   thirdAttr;
-    bit<32>   forthAttr;
-    bit<32>   fifthAttr;
+    bit<1>          bos;
+    bit<31>         entryId;
+    db_attribute_t  secondAttr;
+    db_attribute_t  thirdAttr;
+    db_attribute_t  forthAttr;
+    db_attribute_t  fifthAttr;
 }
 
 struct db_entry_metadata_t {
+    /* Preserve containsReply within recirculate pipeline 
+    * to distinguish if there is an additional reply header stack
+    */
     @field_list(FieldLists.resubmit_FL)
-    bit<16>  nextIndex;
-    @field_list(FieldLists.resubmit_FL)
-    bool                    containsReply;
+    bool    containsReply;
 }
 
 struct metadata {
@@ -117,7 +120,7 @@ parser MyParser(packet_in packet,
         }
     }
 
-    /* Parse the relation id */ 
+    /* Parse the relation header */ 
     state parse_relation {
         packet.extract(hdr.db_relation);
         transition select(hdr.db_relation.isReply) {
@@ -126,7 +129,10 @@ parser MyParser(packet_in packet,
         }
     }
 
-    /* Parse all the headers in the entries header stack until bottom of the stack has reached */
+    /*  Parse all the headers in the entries header stack until bottom of the stack has reached.
+    *   In case, there are temporary reply entries added after bottom of stack has reached, go
+    *   to parse_temp_reply_entries state to distinguish if further parsing is required.
+    */
     state parse_entries {
         packet.extract(hdr.db_entries.next);
         transition select(hdr.db_entries.last.bos) {
@@ -135,6 +141,10 @@ parser MyParser(packet_in packet,
         }
     }
 
+    /**
+    * Check from the preserved metadata field if a reply header stack exists.
+    * If yes, then parse that as well for manipulation purposes, otherwise stop here.
+    */
     state parse_temp_reply_entries {
         transition select(meta.dbEntry_meta.containsReply) {
             true    : parse_reply_entries;
@@ -142,6 +152,9 @@ parser MyParser(packet_in packet,
         }
     }
 
+    /**
+    * Parse reply header stack until bottom of stack has reached.
+    */
     state parse_reply_entries {
         packet.extract(hdr.db_reply_entries.next);
         transition select(hdr.db_reply_entries.last.bos) {
@@ -211,96 +224,126 @@ control MyEgress(inout headers hdr,
     
     // Initialize hash table
     register<bit<64>>(NB_CELLS) database;
-    register<bit<1>>(1) databaseControl;
+    // Database control registers.
     register<bit<6>>(1) relationIdRegister;
 
+    /*
+    * Insert a single entry to the hash table.
+    */
     action db_update() {
         bit<16> hashedKey = 0;
         bit<64> tmpTuple = 0;
-        bit<16> currentIndex = 0;
 
-        currentIndex = 0;
+        // Encode all the attributes to a single field.
+        tmpTuple[63:32] = hdr.db_entries[0].secondAttr;
+        tmpTuple[31:0] = hdr.db_entries[0].thirdAttr;
 
-        tmpTuple[63:32] = hdr.db_entries[currentIndex].secondAttr;
-        tmpTuple[31:0] = hdr.db_entries[currentIndex].thirdAttr;
-
-        hash(hashedKey, HashAlgorithm.crc16, (bit<32>)0, { hdr.db_entries[currentIndex].entryId }, (bit<32>)NB_CELLS);
-        log_msg("Hashing an entry {} from {}", {hashedKey, hdr.db_entries[currentIndex].entryId});
-        // Add entry in hash table
+        // Hash the primary key (entryId)
+        hash(hashedKey, HashAlgorithm.crc16, (bit<32>)0, { hdr.db_entries[0].entryId }, (bit<32>)NB_CELLS);
+        log_msg("Hashing an entry {} from {}", {hashedKey, hdr.db_entries[0].entryId});
+        // Add entry to the hash table
         database.write((bit<32>)hashedKey, tmpTuple);
+        // Remove the entry from the header stack to be able to push it to the circulate pipeline
         hdr.db_entries.pop_front(1);
-        meta.dbEntry_meta.nextIndex = meta.dbEntry_meta.nextIndex + 1;
     }
 
+    /**
+    * Lock the database by writing the relation Id.
+    */
     action lock_database() {
-        databaseControl.write((bit<32>)0, 1);
         relationIdRegister.write((bit<32>)0, hdr.db_relation.relationId);
     }
 
+    /**
+    *   Decrement the IPv4 length by 12 bytes for removing an entry from the db_entry header stack.
+    */
+    action dec_length_of_dbentry() {
+        hdr.ipv4.totalLen = hdr.ipv4.totalLen - 12;
+    }
+
     apply {
-        bit<16> currentIndex = meta.dbEntry_meta.nextIndex;
 
         if (hdr.db_entries[0].isValid()) {
-            log_msg("Validating header of {}", {hdr.db_entries[0].entryId});
-            bit<1> databaseLocked;
             bit<6> db_relationId;
+            // Read out bottom of stack flag to figure out if we have reached the last entry.
             bit<1> bosReached = hdr.db_entries[0].bos;
-            databaseControl.read(databaseLocked, (bit<32>)0);
 
-            if (databaseLocked == 0) {
+            relationIdRegister.read(db_relationId, (bit<32>)0);
+
+            // If relationId register is empty (=0), then hash table is probably empty.
+            // That's why let's lock the database by writing the relationId
+            if (db_relationId == 0) {
                 lock_database();
             }
-            relationIdRegister.read(db_relationId, (bit<32>)0);
+
+            // If the relationId in the packet is the same from the register, then add entries
+            // otherwise it is an INNER JOIN operation
             if (db_relationId == hdr.db_relation.relationId || hdr.db_relation.flush == 1) {
+                // Operation to add insert entries
                 meta.dbEntry_meta.containsReply = false;
                 db_update();
-                hdr.ipv4.totalLen = hdr.ipv4.totalLen - 12;
+                dec_length_of_dbentry();
             } else {
-
+                // INNER JOIN Operation
                 bit<16> hashedKey = 0;
                 bit<64> tmpTuple = 0;
                 bit<32> secondAttr = 0;
                 bit<32> thirdAttr = 0;
 
+                // Hash primary key (entryId)
                 hash(hashedKey, HashAlgorithm.crc16, (bit<32>)0, { hdr.db_entries[0].entryId }, (bit<32>)NB_CELLS);
                 // Read entry from hash table
                 database.read(tmpTuple, (bit<32>)hashedKey);
                 secondAttr = tmpTuple[63:32];
                 thirdAttr = tmpTuple[31:0];
-                meta.dbEntry_meta.containsReply = true;
-                // Add new entry in metadata
-                hdr.db_reply_entries.push_front(1);
-                hdr.db_reply_entries[0].setValid();
-                hdr.db_reply_entries[0].bos = 0;
-                // Set bos only on the first entry as it will be moved to the end.
-                if (hdr.db_reply_entries[1].isValid() == false) {
-                    hdr.db_reply_entries[0].bos = 1;
+                // Check if primary key has been found
+                // If we register is fully 0, then we assume that there weren't any entries for that key
+                if (secondAttr != 0 && thirdAttr != 0) {
+                    // Primary key exists in hash table. Do the JOIN
+                    meta.dbEntry_meta.containsReply = true;
+                    // Add a new entry in reply header stack
+                    hdr.db_reply_entries.push_front(1);
+                    hdr.db_reply_entries[0].setValid();
+                    hdr.db_reply_entries[0].bos = 0;
+                    // Set bos only on the first entry as it will be moved to the end.
+                    if (hdr.db_reply_entries[1].isValid() == false) {
+                        hdr.db_reply_entries[0].bos = 1;
+                    }
+                    hdr.db_reply_entries[0].entryId = hdr.db_entries[0].entryId;
+                    hdr.db_reply_entries[0].secondAttr = hdr.db_entries[0].secondAttr;
+                    hdr.db_reply_entries[0].thirdAttr = hdr.db_entries[0].thirdAttr;
+                    hdr.db_reply_entries[0].forthAttr = secondAttr;
+                    hdr.db_reply_entries[0].fifthAttr = thirdAttr;
+                    log_msg("Retrieved entry {}, secondAttr {}, thirdAttr {}", {hdr.db_entries[0].entryId, secondAttr, thirdAttr});
+                    // Increase by 8 bytes for adding two addition fields => Diff db_entry and db_reply_entry
+                    hdr.ipv4.totalLen = hdr.ipv4.totalLen + 8;
+                } else {
+                    // Primary key has not been found in the hash table
+                    // Decrement the IPv4 length as we are removing the entry from the header stack.
+                    dec_length_of_dbentry();
                 }
-                hdr.db_reply_entries[0].entryId = hdr.db_entries[0].entryId;
-                hdr.db_reply_entries[0].secondAttr = hdr.db_entries[0].secondAttr;
-                hdr.db_reply_entries[0].thirdAttr = hdr.db_entries[0].thirdAttr;
-                hdr.db_reply_entries[0].forthAttr = secondAttr;
-                hdr.db_reply_entries[0].fifthAttr = thirdAttr;
-                log_msg("Retrieved entry {}, secondAttr {}, thirdAttr {}", {hdr.db_entries[0].entryId, secondAttr, thirdAttr});
                 hdr.db_entries.pop_front(1);
-                hdr.ipv4.totalLen = hdr.ipv4.totalLen + 8;
             }
 
+            // If we haven't reached the bottom of stack of the db_entries header stack,
+            // then we recirculate this modified packet again to loop over whole the header stack.
             if (hdr.db_entries[0].isValid() && bosReached != 1) {
                 recirculate_preserving_field_list((bit<8>)FieldLists.resubmit_FL);
             }
+
             if (bosReached == 1) {
+                // If we have reached the bottom of stack, check if we have added any reply headers
                 if (meta.dbEntry_meta.containsReply != true) {
+                    // If there are not reply headers, then remove the relation header and set the next protocol has UDP
                     hdr.ipv4.protocol = TYPE_UDP;
                     hdr.db_relation.setInvalid();
                     hdr.ipv4.totalLen = hdr.ipv4.totalLen - 1;
                 } else {
+                    // If our header stack contains a reply, then set the flag in the relation header.
                     hdr.db_relation.isReply = 1;
                 }
             }
-
         }
-
     }
 }
 

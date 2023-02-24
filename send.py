@@ -21,6 +21,9 @@ from scapy.all import (
 from scapy.layers.inet import _IPOption_HDR
 
 
+NUMBER_ENTRIES = 10
+RANDOM_ENTITYIDS = random.sample(range(0, 1000), NUMBER_ENTRIES)
+
 def get_if():
     ifs=get_if_list()
     iface=None # "h1-eth0"
@@ -54,26 +57,16 @@ bind_layers(DBRelation, DBEntry)
 bind_layers(DBEntry, DBEntry, bos=0)
 bind_layers(DBEntry, UDP, bos=1)
 
-def main():
-
-    if len(sys.argv)<4:
-        print('pass 3 arguments: <destination> <isJoin> "<message>"')
-        print('<isJoin> should be this packet used for join operation or to fill the hash table? 1 for yes or 0 for no')
-        exit(1)
-
+def generate_db_pkt(relationId, pick_random_entityId=False, isFlush=0):
     addr = socket.gethostbyname(sys.argv[1])
     iface = get_if()
-    isFlush = 0x0
-    print(sys.argv[2])
-    relationId = 0x1
-    if sys.argv[2] == "1":
-        #isFlush = 0x0
-        relationId = 0x2
-
     pkt = Ether(src=get_if_hwaddr(iface), dst="ff:ff:ff:ff:ff:ff") / IP(dst=addr, proto=0xFA) / DBRelation(relationId=relationId, isFlush=isFlush, isReply=0)
     i = 0
-    for p in range(0,10):
-        entityId = random.randint(0, 1000)
+    for p in range(0,NUMBER_ENTRIES):
+        entityId = RANDOM_ENTITYIDS[i]
+        # Pick a new random entity if random generator returns false
+        if pick_random_entityId and not bool(random.getrandbits(1)):
+            entityId = random.randint(0, 1000)
         secondAttr = random.randint(0, 1000)
         thirdAttr = random.randint(0, 1000)
         try:
@@ -85,11 +78,30 @@ def main():
     if pkt.haslayer(DBEntry):
         pkt.getlayer(DBEntry, i).bos = 1
         
-    pkt = pkt / UDP(dport=4321, sport=1234) / sys.argv[3]
+    pkt = pkt / UDP(dport=4321, sport=1234) / sys.argv[2]
+    return pkt
 
-    pkt.show2()
+def main():
+
+    if len(sys.argv)<3:
+        print('pass 2 arguments: <destination> "<message>"')
+        exit(1)
+
+    r_relation = generate_db_pkt(relationId=1)
+
+    r_relation.show2()
+    iface = get_if()
     try:
-        sendp(pkt, iface=iface)
+        sendp(r_relation, iface=iface)
+        sleep(1)        
+    except KeyboardInterrupt:
+        raise
+    
+    s_relation = generate_db_pkt(relationId=2, pick_random_entityId=True)
+
+    s_relation.show2()
+    try:
+        sendp(s_relation, iface=iface)
         sleep(1)        
     except KeyboardInterrupt:
         raise
