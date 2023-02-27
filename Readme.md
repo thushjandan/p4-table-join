@@ -61,7 +61,7 @@ In case the requested relation is a different from the relation stored on the sw
  0                   1                   2                   3
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|  relationId |replyJoinedR.|i|r|
+|   relationId  |replyJoinedRel.|
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 Total 2 bytes (16-bits)
@@ -86,7 +86,6 @@ Total 12 bytes (96 bits)
 * thirdAttr (32-bit): Third attribute of the tuple represented as an unsigned integer.
 
 ### Reply Tuple (Joined tuple)
-Total 20 bytes (160 bits) 
 ```
  0                   1                   2                   3
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
@@ -102,6 +101,7 @@ Total 20 bytes (160 bits)
 |                           fifthAttr                           |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
+Total 20 bytes (160 bits)
 * entryId (32-bit): primary key represented as an unsigned integer.
 * secondAttr (32-bit): Second attribute of the tuple represented as an unsigned integer.
 * thirdAttr (32-bit): Third attribute of the tuple represented as an unsigned integer.
