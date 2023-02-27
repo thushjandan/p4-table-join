@@ -26,14 +26,16 @@ def get_if():
 
 class DBEntry(Packet):
     fields_desc = [ 
-        IntField("entryId", 0),
+        BitField("bos", 0, 1),
+        BitField("entryId", 0, 31),
         IntField("secondAttr", 0),
         IntField("thirdAttr", 0),
     ]
 
 class DBReplyEntry(Packet):
     fields_desc = [ 
-        IntField("entryId", 0),
+        BitField("bos", 0, 1),
+        BitField("entryId", 0, 31),
         IntField("secondAttr", 0),
         IntField("thirdAttr", 0),
         IntField("forthAttr", 0),
@@ -43,18 +45,26 @@ class DBReplyEntry(Packet):
 class DBRelation(Packet):
     name = "MYP4DB_Relation"
     fields_desc = [ 
-        BitField("relationId", 0, 8),
-        BitField("replyJoinedrelationId", 0, 8),
+        BitField("relationId", 0, 7),
+        BitField("replyJoinedrelationId", 0, 7),
+        BitField("isReply", 0, 1),
+        BitField("reserved", 0, 1),
     ]
 
 # IP proto 250 indicates MYP4DB_Relation
 bind_layers(IP, DBRelation, proto=0xFA)
+# If isReply is not set, then DBEntry follows (request packet)
+bind_layers(DBRelation, DBEntry, isReply=0x0)
 # If isReply is set, then it is a reply packet.
-bind_layers(DBRelation, DBReplyEntry)
+bind_layers(DBRelation, DBReplyEntry, isReply=0x1)
+# Recursively bind to the same type as long bottom of stack has not reached
+bind_layers(DBEntry, DBEntry, bos=0)
 # If bottom of stack has reached, then UDP header will follow
-bind_layers(DBEntry, UDP)
+bind_layers(DBEntry, UDP, bos=1)
+# Recursively bind to the same type as long bottom of stack has not reached
+bind_layers(DBReplyEntry, DBReplyEntry, bos=0)
 # If bottom of stack has reached, then UDP header will follow
-bind_layers(DBReplyEntry, UDP)
+bind_layers(DBReplyEntry, UDP, bos=1)
 
 def handle_pkt(pkt):
     print("got a packet")
