@@ -49,12 +49,12 @@ make clean
 ```
 
 ## Design
-After the IPv4 header, the [MYP4DB_Relation](#relational-header-myp4db_relation) header will be appended, which contains the metadata for a relation and control flags. IPv4 protocol number 0xFA (250) is used to indicate that header.
-A header stack of type [DBEntry](#request-tuple-dbentry) will follow for every tuple.
+After the IPv4 header, the [MYP4DB_Relation](#relational-header-myp4db_relation) header will be appended, which contains the metadata for a relation. IPv4 protocol number 0xFA (250) is used to indicate that header.
+An additional header of type [DBEntry](#request-tuple-dbentry) will follow, which contains a single tuple.
 
-The switch will process each tuple from the header stack. If the switch decides to store the relation in case of an empty hash table, it will remove the whole header stack as well as [MYP4DB_Relation](#relational-header-myp4db_relation) header at the end. So, the receiver will only receive the UDP packet consisting of Ethernet & IPv4 headers.
+The switch will process the tuple from the header. If the switch decides to store the relation in case of an empty hash table, it will drop the whole packet after processing.
 
-In case the requested relation is a different from the relation stored on the switch, a INNER JOIN operation is assumed on the switch and a header stack of type [DBReplyEntry](#reply-tuple-joined-tuple), containing the joined tuples, is generated.
+In case the requested relation is a different from the relation stored on the switch, a INNER JOIN operation is assumed on the switch and a header of type [DBReplyEntry](#reply-tuple-joined-tuple), containing the joined tuple, is generated.
 
 ### Relational Header (MYP4DB_Relation)
 ```
@@ -65,34 +65,33 @@ In case the requested relation is a different from the relation stored on the sw
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 Total 2 bytes (16-bits)
-* relationId (7-bit): the name of the relation represented as an unsigned integer. 
-* replyJoinedRelation (7-bit): the name of the joined relation represented as an unsigned integer. The default is empty (0) and will only be used within a reply packet.
-* isReply (1-bit): indicates if it is a request or reply packet. 0 for request and 1 for reply.
-* reserved (1-bit): reserved for future uses.
+* relationId (8-bit): the name of the relation represented as an unsigned integer. 
+* replyJoinedRelation (8-bit): the name of the joined relation represented as an unsigned integer. The default is empty (0) and will only be used within a reply packet.
+
 ### Request Tuple (DBEntry)
 ```
  0                   1                   2                   3
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|b|                           entryId                           |
+|                           entryId                             |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |                           secondAttr                          |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |                           thirdAttr                           |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
-Total 12 bytes (96 bits) per entry
-* bos (1-bit): indicates if bottom of stack has reached. 1 if bos has reached, otherwise 0
-* entryId (31-bit): primary key represented as an unsigned integer.
+Total 12 bytes (96 bits)
+* entryId (32-bit): primary key represented as an unsigned integer.
 * secondAttr (32-bit): Second attribute of the tuple represented as an unsigned integer.
 * thirdAttr (32-bit): Third attribute of the tuple represented as an unsigned integer.
+
 ### Reply Tuple (Joined tuple)
-Total 20 bytes (160 bits) per entry
+Total 20 bytes (160 bits) 
 ```
  0                   1                   2                   3
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|b|                           entryId                           |
+|                           entryId                             |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |                           secondAttr                          |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -103,8 +102,7 @@ Total 20 bytes (160 bits) per entry
 |                           fifthAttr                           |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
-* bos (1-bit): indicates if bottom of stack has reached. 1 if bos has reached, otherwise 0
-* entryId (31-bit): primary key represented as an unsigned integer.
+* entryId (32-bit): primary key represented as an unsigned integer.
 * secondAttr (32-bit): Second attribute of the tuple represented as an unsigned integer.
 * thirdAttr (32-bit): Third attribute of the tuple represented as an unsigned integer.
 * forthAttr (32-bit): Forth attribute of the tuple represented as an unsigned integer.
@@ -126,10 +124,10 @@ h1> ./send.py 10.0.2.2 "P4 is cool"
 ```
 
 ### Example output
-Two packets will be sent from h1. All the entries in the first packet will be stored in the hash table of the switch. The second request will trigger a INNER JOIN on the switch and h2 will get all the joined records.
+20 packets will be sent from h1. All the tuples in the first 10 packets will be stored in the hash table of the switch. The last 10 requests will trigger a INNER JOIN on the switch, due to a different relationId, and h2 will receive all the joined records.
 
-Long story short, all the joined tuples (INNER JOIN) can be found in the DBReplyEntry header stack => [see here](#retrieved-packets-on-h2).
-#### Sent packets on h1
+Long story short, all the joined tuples (INNER JOIN) can be found in the DBReplyEntry header => [see here](#retrieved-packets-on-h2).
+#### 2 samples sent by h1, which will be stored on the switch
 ```
 ###[ Ethernet ]### 
   dst       = ff:ff:ff:ff:ff:ff
@@ -139,79 +137,30 @@ Long story short, all the joined tuples (INNER JOIN) can be found in the DBReply
      version   = 4
      ihl       = 5
      tos       = 0x0
-     len       = 160
+     len       = 52
      id        = 1
      flags     = 
      frag      = 0
      ttl       = 64
      proto     = 250
-     chksum    = 0x6261
+     chksum    = 0x62cd
      src       = 10.0.1.1
      dst       = 10.0.2.2
      \options   \
 ###[ MYP4DB_Relation ]### 
         relationId= 1
         replyJoinedrelationId= 0
-        isReply   = 0
-        reserved  = 0
 ###[ DBEntry ]### 
-           bos       = 0
-           entryId   = 225
-           secondAttr= 788
-           thirdAttr = 843
-###[ DBEntry ]### 
-              bos       = 0
-              entryId   = 521
-              secondAttr= 654
-              thirdAttr = 857
-###[ DBEntry ]### 
-                 bos       = 0
-                 entryId   = 456
-                 secondAttr= 223
-                 thirdAttr = 550
-###[ DBEntry ]### 
-                    bos       = 0
-                    entryId   = 840
-                    secondAttr= 496
-                    thirdAttr = 985
-###[ DBEntry ]### 
-                       bos       = 0
-                       entryId   = 939
-                       secondAttr= 470
-                       thirdAttr = 470
-###[ DBEntry ]### 
-                          bos       = 0
-                          entryId   = 994
-                          secondAttr= 870
-                          thirdAttr = 115
-###[ DBEntry ]### 
-                             bos       = 0
-                             entryId   = 670
-                             secondAttr= 309
-                             thirdAttr = 423
-###[ DBEntry ]### 
-                                bos       = 0
-                                entryId   = 972
-                                secondAttr= 67
-                                thirdAttr = 35
-###[ DBEntry ]### 
-                                   bos       = 0
-                                   entryId   = 813
-                                   secondAttr= 307
-                                   thirdAttr = 967
-###[ DBEntry ]### 
-                                      bos       = 1
-                                      entryId   = 559
-                                      secondAttr= 739
-                                      thirdAttr = 288
+           entryId   = 460
+           secondAttr= 333
+           thirdAttr = 524
 ###[ UDP ]### 
-                                         sport     = 1234
-                                         dport     = 4321
-                                         len       = 18
-                                         chksum    = 0x0
+              sport     = 1234
+              dport     = 4321
+              len       = 18
+              chksum    = 0x0
 ###[ Raw ]### 
-                                            load      = 'P4 is cool'
-
+                 load      = 'P4 is cool'
 
 ###[ Ethernet ]### 
   dst       = ff:ff:ff:ff:ff:ff
@@ -221,183 +170,241 @@ Long story short, all the joined tuples (INNER JOIN) can be found in the DBReply
      version   = 4
      ihl       = 5
      tos       = 0x0
-     len       = 160
+     len       = 52
      id        = 1
      flags     = 
      frag      = 0
      ttl       = 64
      proto     = 250
-     chksum    = 0x6261
+     chksum    = 0x62cd
+     src       = 10.0.1.1
+     dst       = 10.0.2.2
+     \options   \
+###[ MYP4DB_Relation ]### 
+        relationId= 1
+        replyJoinedrelationId= 0
+###[ DBEntry ]### 
+           entryId   = 502
+           secondAttr= 840
+           thirdAttr = 421
+###[ UDP ]### 
+              sport     = 1234
+              dport     = 4321
+              len       = 18
+              chksum    = 0x0
+###[ Raw ]### 
+                 load      = 'P4 is cool'
+```
+#### 2 samples sent by h1, which will trigger a JOIN on the switch
+As the switch holds currently tuples from the relation R with id `1`, we send tuples from relation S with id `2` now
+```
+###[ Ethernet ]### 
+  dst       = ff:ff:ff:ff:ff:ff
+  src       = 08:00:00:00:01:11
+  type      = IPv4
+###[ IP ]### 
+     version   = 4
+     ihl       = 5
+     tos       = 0x0
+     len       = 52
+     id        = 1
+     flags     = 
+     frag      = 0
+     ttl       = 64
+     proto     = 250
+     chksum    = 0x62cd
      src       = 10.0.1.1
      dst       = 10.0.2.2
      \options   \
 ###[ MYP4DB_Relation ]### 
         relationId= 2
         replyJoinedrelationId= 0
-        isReply   = 0
-        reserved  = 0
 ###[ DBEntry ]### 
-           bos       = 0
-           entryId   = 225
-           secondAttr= 318
-           thirdAttr = 621
-###[ DBEntry ]### 
-              bos       = 0
-              entryId   = 521
-              secondAttr= 106
-              thirdAttr = 313
-###[ DBEntry ]### 
-                 bos       = 0
-                 entryId   = 238
-                 secondAttr= 748
-                 thirdAttr = 286
-###[ DBEntry ]### 
-                    bos       = 0
-                    entryId   = 840
-                    secondAttr= 418
-                    thirdAttr = 157
-###[ DBEntry ]### 
-                       bos       = 0
-                       entryId   = 837
-                       secondAttr= 358
-                       thirdAttr = 910
-###[ DBEntry ]### 
-                          bos       = 0
-                          entryId   = 212
-                          secondAttr= 741
-                          thirdAttr = 403
-###[ DBEntry ]### 
-                             bos       = 0
-                             entryId   = 670
-                             secondAttr= 650
-                             thirdAttr = 381
-###[ DBEntry ]### 
-                                bos       = 0
-                                entryId   = 36
-                                secondAttr= 516
-                                thirdAttr = 133
-###[ DBEntry ]### 
-                                   bos       = 0
-                                   entryId   = 813
-                                   secondAttr= 981
-                                   thirdAttr = 202
-###[ DBEntry ]### 
-                                      bos       = 1
-                                      entryId   = 559
-                                      secondAttr= 762
-                                      thirdAttr = 308
+           entryId   = 460
+           secondAttr= 884
+           thirdAttr = 547
 ###[ UDP ]### 
-                                         sport     = 1234
-                                         dport     = 4321
-                                         len       = 18
-                                         chksum    = 0x0
+              sport     = 1234
+              dport     = 4321
+              len       = 18
+              chksum    = 0x0
 ###[ Raw ]### 
-                                            load      = 'P4 is cool'
+                 load      = 'P4 is cool'
 
-
-Sent 1 packets.
-```
-#### Retrieved packets on h2
-```
 ###[ Ethernet ]### 
-  dst       = 08:00:00:00:02:22
-  src       = 08:00:00:00:02:22
+  dst       = ff:ff:ff:ff:ff:ff
+  src       = 08:00:00:00:01:11
   type      = IPv4
 ###[ IP ]### 
      version   = 4
      ihl       = 5
      tos       = 0x0
-     len       = 39
+     len       = 52
      id        = 1
      flags     = 
      frag      = 0
-     ttl       = 54
-     proto     = udp
-     chksum    = 0x6dc3
+     ttl       = 64
+     proto     = 250
+     chksum    = 0x62cd
      src       = 10.0.1.1
      dst       = 10.0.2.2
      \options   \
+###[ MYP4DB_Relation ]### 
+        relationId= 2
+        replyJoinedrelationId= 0
+###[ DBEntry ]### 
+           entryId   = 502
+           secondAttr= 48
+           thirdAttr = 244
 ###[ UDP ]### 
-        sport     = 1234
-        dport     = 4321
-        len       = 18
-        chksum    = 0x0
+              sport     = 1234
+              dport     = 4321
+              len       = 18
+              chksum    = 0x0
 ###[ Raw ]### 
-           load      = 'P4 is cool'
-
-
+                 load      = 'P4 is cool'
+```
+#### Retrieved packets on h2
+```sniffing on eth0
 ###[ Ethernet ]### 
   dst       = 08:00:00:00:02:22
-  src       = 08:00:00:00:02:22
+  src       = ff:ff:ff:ff:ff:ff
   type      = IPv4
 ###[ IP ]### 
      version   = 4
      ihl       = 5
      tos       = 0x0
-     len       = 160
+     len       = 60
      id        = 1
      flags     = 
      frag      = 0
-     ttl       = 54
+     ttl       = 63
      proto     = 250
-     chksum    = 0x6c61
+     chksum    = 0x63c5
      src       = 10.0.1.1
      dst       = 10.0.2.2
      \options   \
 ###[ MYP4DB_Relation ]### 
         relationId= 2
         replyJoinedrelationId= 1
-        isReply   = 1
-        reserved  = 0
 ###[ DBReplyEntry ]### 
-           bos       = 0
-           entryId   = 559
-           secondAttr= 762
-           thirdAttr = 308
-           forthAttr = 739
-           fifthAttr = 288
-###[ DBReplyEntry ]### 
-              bos       = 0
-              entryId   = 813
-              secondAttr= 981
-              thirdAttr = 202
-              forthAttr = 307
-              fifthAttr = 967
-###[ DBReplyEntry ]### 
-                 bos       = 0
-                 entryId   = 670
-                 secondAttr= 650
-                 thirdAttr = 381
-                 forthAttr = 309
-                 fifthAttr = 423
-###[ DBReplyEntry ]### 
-                    bos       = 0
-                    entryId   = 840
-                    secondAttr= 418
-                    thirdAttr = 157
-                    forthAttr = 496
-                    fifthAttr = 985
-###[ DBReplyEntry ]### 
-                       bos       = 0
-                       entryId   = 521
-                       secondAttr= 106
-                       thirdAttr = 313
-                       forthAttr = 654
-                       fifthAttr = 857
-###[ DBReplyEntry ]### 
-                          bos       = 1
-                          entryId   = 225
-                          secondAttr= 318
-                          thirdAttr = 621
-                          forthAttr = 788
-                          fifthAttr = 843
+           entryId   = 502
+           secondAttr= 48
+           thirdAttr = 244
+           forthAttr = 840
+           fifthAttr = 421
 ###[ UDP ]### 
-                             sport     = 1234
-                             dport     = 4321
-                             len       = 18
-                             chksum    = 0x0
+              sport     = 1234
+              dport     = 4321
+              len       = 18
+              chksum    = 0x0
 ###[ Raw ]### 
-                                load      = 'P4 is cool'
+                 load      = 'P4 is cool'
+
+###[ Ethernet ]### 
+  dst       = 08:00:00:00:02:22
+  src       = ff:ff:ff:ff:ff:ff
+  type      = IPv4
+###[ IP ]### 
+     version   = 4
+     ihl       = 5
+     tos       = 0x0
+     len       = 60
+     id        = 1
+     flags     = 
+     frag      = 0
+     ttl       = 63
+     proto     = 250
+     chksum    = 0x63c5
+     src       = 10.0.1.1
+     dst       = 10.0.2.2
+     \options   \
+###[ MYP4DB_Relation ]### 
+        relationId= 2
+        replyJoinedrelationId= 1
+###[ DBReplyEntry ]### 
+           entryId   = 460
+           secondAttr= 884
+           thirdAttr = 547
+           forthAttr = 333
+           fifthAttr = 524
+###[ UDP ]### 
+              sport     = 1234
+              dport     = 4321
+              len       = 18
+              chksum    = 0x0
+###[ Raw ]### 
+                 load      = 'P4 is cool'
+
+###[ Ethernet ]### 
+  dst       = 08:00:00:00:02:22
+  src       = ff:ff:ff:ff:ff:ff
+  type      = IPv4
+###[ IP ]### 
+     version   = 4
+     ihl       = 5
+     tos       = 0x0
+     len       = 60
+     id        = 1
+     flags     = 
+     frag      = 0
+     ttl       = 63
+     proto     = 250
+     chksum    = 0x63c5
+     src       = 10.0.1.1
+     dst       = 10.0.2.2
+     \options   \
+###[ MYP4DB_Relation ]### 
+        relationId= 2
+        replyJoinedrelationId= 1
+###[ DBReplyEntry ]### 
+           entryId   = 299
+           secondAttr= 35
+           thirdAttr = 131
+           forthAttr = 699
+           fifthAttr = 306
+###[ UDP ]### 
+              sport     = 1234
+              dport     = 4321
+              len       = 18
+              chksum    = 0x0
+###[ Raw ]### 
+                 load      = 'P4 is cool'
+
+###[ Ethernet ]### 
+  dst       = 08:00:00:00:02:22
+  src       = ff:ff:ff:ff:ff:ff
+  type      = IPv4
+###[ IP ]### 
+     version   = 4
+     ihl       = 5
+     tos       = 0x0
+     len       = 60
+     id        = 1
+     flags     = 
+     frag      = 0
+     ttl       = 63
+     proto     = 250
+     chksum    = 0x63c5
+     src       = 10.0.1.1
+     dst       = 10.0.2.2
+     \options   \
+###[ MYP4DB_Relation ]### 
+        relationId= 2
+        replyJoinedrelationId= 1
+###[ DBReplyEntry ]### 
+           entryId   = 588
+           secondAttr= 334
+           thirdAttr = 742
+           forthAttr = 707
+           fifthAttr = 922
+###[ UDP ]### 
+              sport     = 1234
+              dport     = 4321
+              len       = 18
+              chksum    = 0x0
+###[ Raw ]### 
+                 load      = 'P4 is cool'
 ```
 
 ## References
