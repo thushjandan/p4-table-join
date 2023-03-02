@@ -47,7 +47,6 @@ class DBRelation(Packet):
     name = "MYP4DB_Relation"
     fields_desc = [ 
         BitField("relationId", 0, 8),
-        BitField("replyJoinedrelationId", 0, 8),
     ]
 
 # IP proto 250 indicates MYP4DB_Relation

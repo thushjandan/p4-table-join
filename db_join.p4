@@ -40,7 +40,6 @@ header ipv4_t {
 
 header db_relation_t {
     bit<8>  relationId;
-    bit<8>  replyJoinedRelationId;
 }
 
 header db_tuple_t {
@@ -130,8 +129,6 @@ control MyIngress(inout headers hdr,
     
     // Initialize hash table
     register<bit<64>>(NB_CELLS) database;
-    // Database control registers. Used to store the name of the relation
-    register<bit<8>>(1) relationIdRegister;
 
     action drop() {
         mark_to_drop(standard_metadata);
@@ -157,79 +154,79 @@ control MyIngress(inout headers hdr,
         default_action = drop();
     }
 
-    apply {
+    action insert_entry() {
+        // Insert tuple in the hash table
+        bit<16> hashedKey = 0;
+        bit<64> tmpTuple = 0;
 
-        if (hdr.ipv4.isValid()) {
-            ipv4_lpm.apply();
+        // Encode all the attributes into a single field.
+        tmpTuple[63:32] = hdr.db_tuple.secondAttr;
+        tmpTuple[31:0] = hdr.db_tuple.thirdAttr;
+
+        // Hash the primary key (entryId)
+        hash(hashedKey, HashAlgorithm.crc16, (bit<32>)0, { hdr.db_tuple.entryId }, (bit<32>)NB_CELLS);
+        log_msg("Hashing an entry {} from {}", {hashedKey, hdr.db_tuple.entryId});
+        // Add entry to the hash table
+        database.write((bit<32>)hashedKey, tmpTuple);
+        // Drop packet after processing
+        drop();
+    }
+
+    action read_entry() {
+        // INNER JOIN Operation
+        bit<16> hashedKey = 0;
+        bit<64> tmpTuple = 0;
+        bit<32> secondAttr = 0;
+        bit<32> thirdAttr = 0;
+
+        // Hash primary key (entryId)
+        hash(hashedKey, HashAlgorithm.crc16, (bit<32>)0, { hdr.db_tuple.entryId }, (bit<32>)NB_CELLS);
+        // Read entry from hash table
+        database.read(tmpTuple, (bit<32>)hashedKey);
+        // Decode the value from the register
+        secondAttr = tmpTuple[63:32];
+        thirdAttr = tmpTuple[31:0];
+
+        // Add a new entry in reply header stack
+        hdr.db_reply_tuple.setValid();
+        hdr.db_reply_tuple.entryId = hdr.db_tuple.entryId;
+        hdr.db_reply_tuple.secondAttr = hdr.db_tuple.secondAttr;
+        hdr.db_reply_tuple.thirdAttr = hdr.db_tuple.thirdAttr;
+        hdr.db_reply_tuple.forthAttr = secondAttr;
+        hdr.db_reply_tuple.fifthAttr = thirdAttr;
+        log_msg("Retrieved entry {}, secondAttr {}, thirdAttr {}", {hdr.db_tuple.entryId, secondAttr, thirdAttr});
+
+        // Increase by 8 bytes for adding two addition fields => Diff db_entry and db_reply_entry
+        hdr.ipv4.totalLen = hdr.ipv4.totalLen + 8;
+        
+        // Remove db_tuple header
+        hdr.db_tuple.setInvalid();
+    }
+
+    table db_join {
+        key = {
+            hdr.db_relation.relationId: exact;
         }
+        actions = {
+            insert_entry;
+            read_entry;
+            drop;
+            NoAction;
+        }
+        size = 16;
+        default_action = drop();
+    }
+
+    apply {
+        // Run IPv4 routing logic.
+        ipv4_lpm.apply();
 
         if (hdr.db_relation.isValid()) {
-            bit<8> db_relationId;
-            bit<16> hashedKey = 0;
-            bit<64> tmpTuple = 0;
-
-            relationIdRegister.read(db_relationId, (bit<32>)0);
-
-            // If relationId register is empty (=0), then hash table is probably empty.
-            // That's why let's lock the database by writing the relationId
-            if (db_relationId == 0) {
-                // Lock the database by writing the relation Id.
-                relationIdRegister.write((bit<32>)0, hdr.db_relation.relationId);
-            }
-
-            // If the relationId in the packet is the same from the register, then add entries
-            // otherwise it is an INNER JOIN operation
-            if (db_relationId == hdr.db_relation.relationId) {
-                // Insert tuple in the hash table
-
-                // Encode all the attributes into a single field.
-                tmpTuple[63:32] = hdr.db_tuple.secondAttr;
-                tmpTuple[31:0] = hdr.db_tuple.thirdAttr;
-
-                // Hash the primary key (entryId)
-                hash(hashedKey, HashAlgorithm.crc16, (bit<32>)0, { hdr.db_tuple.entryId }, (bit<32>)NB_CELLS);
-                log_msg("Hashing an entry {} from {}", {hashedKey, hdr.db_tuple.entryId});
-                // Add entry to the hash table
-                database.write((bit<32>)hashedKey, tmpTuple);
-                // Drop packet after processing
+            db_join.apply();
+            // Primary key has not been found in the hash table
+            // Drop the packet
+            if (hdr.db_reply_tuple.isValid() && hdr.db_reply_tuple.forthAttr == 0 && hdr.db_reply_tuple.fifthAttr == 0) {
                 drop();
-            } else {
-                // INNER JOIN Operation
-                bit<32> secondAttr = 0;
-                bit<32> thirdAttr = 0;
-
-                // Hash primary key (entryId)
-                hash(hashedKey, HashAlgorithm.crc16, (bit<32>)0, { hdr.db_tuple.entryId }, (bit<32>)NB_CELLS);
-                // Read entry from hash table
-                database.read(tmpTuple, (bit<32>)hashedKey);
-                // Decode the value from the register
-                secondAttr = tmpTuple[63:32];
-                thirdAttr = tmpTuple[31:0];
-
-                // Check if primary key has been found
-                // If the value from the register is 0, then we assume that there weren't any entries for that key.
-                if (secondAttr != 0 && thirdAttr != 0) {
-                    // Add a new entry in reply header stack
-                    hdr.db_reply_tuple.setValid();
-                    hdr.db_reply_tuple.entryId = hdr.db_tuple.entryId;
-                    hdr.db_reply_tuple.secondAttr = hdr.db_tuple.secondAttr;
-                    hdr.db_reply_tuple.thirdAttr = hdr.db_tuple.thirdAttr;
-                    hdr.db_reply_tuple.forthAttr = secondAttr;
-                    hdr.db_reply_tuple.fifthAttr = thirdAttr;
-                    log_msg("Retrieved entry {}, secondAttr {}, thirdAttr {}", {hdr.db_tuple.entryId, secondAttr, thirdAttr});
-
-                    // Increase by 8 bytes for adding two addition fields => Diff db_entry and db_reply_entry
-                    hdr.ipv4.totalLen = hdr.ipv4.totalLen + 8;
-                    // Add the second relation id
-                    hdr.db_relation.replyJoinedRelationId = db_relationId;
-                    
-                    // Remove db_tuple header
-                    hdr.db_tuple.setInvalid();
-                } else {
-                    // Primary key has not been found in the hash table
-                    // Drop the packet
-                    drop();
-                }
             }
         }    
     }
