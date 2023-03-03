@@ -6,7 +6,7 @@ Let's assume we have a single table/relation, called `R`, and it has three (unsi
 
 First we pump the table `R` with random numbers to the switch. The switch will store these tuples in a hash table using `extern register`.
 
-Then we set the `aggregate` flag in the packet header to retrieve the aggregation from a certain entityId.
+Then we set the `aggregate` flag in the packet header to retrieve the aggregation from a certain entityId. We will get the sum of the secondAttr & thirdAttr grouped by entityId.
 
 ### Example
 **Relation R**
@@ -55,7 +55,7 @@ The switch will process the tuple from the header. If the flag `aggregate` is se
 +-+-+-+-+-+-+-+-+
 
 ```
-Total 2 bytes (16-bits)
+Total 1 byte (8-bits)
 * relationId (7-bit): the name of the relation represented as an unsigned integer. 
 * aggregate (1-bit): flag if the switch should return the aggregation results. The default is empty (0). If 0, the switch drops the packet after processing. otherwise the switch will return the results.
 
@@ -92,7 +92,7 @@ h1> ./send.py 10.0.2.2 "P4 is cool"
 ```
 
 ### Example output
-10 packets will be sent from h1. EntityIds will be randomly reused. Afterwards, for each used entityId another packet using the aggregate flag will be sent to retrieve the aggregation, which will be grouped by entitiyId.
+10 packets will be sent from h1. EntityIds will be randomly reused. Afterwards, for each used entityId a packet, with the aggregate flag set, will be sent to retrieve the aggregation. We will retrieve the sum per attribute grouped by entitiyId.
 
 #### 2 samples sent by h1, which will be stored on the switch
 ```###[ Ethernet ]### 
@@ -161,8 +161,8 @@ h1> ./send.py 10.0.2.2 "P4 is cool"
 ###[ Raw ]### 
                  load      = 'P4 is cool'
 ```
-#### 2 samples sent by h1, which will trigger a JOIN on the switch
-As the switch holds currently tuples from the relation R with id `1`, we send tuples from relation S with id `2` now
+#### 2 samples sent by h1, which will trigger a reply from the switch
+We set the aggregate flag to `1`.
 ```Sent 1 packets.
 ###[ Ethernet ]### 
   dst       = ff:ff:ff:ff:ff:ff
@@ -231,7 +231,7 @@ As the switch holds currently tuples from the relation R with id `1`, we send tu
                  load      = 'P4 is cool'
 ```
 #### Retrieved packets on h2
-```sniffing on eth0
+```
 got a packet
 ###[ Ethernet ]### 
   dst       = 08:00:00:00:02:22

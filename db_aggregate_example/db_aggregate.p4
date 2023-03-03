@@ -146,7 +146,7 @@ control MyIngress(inout headers hdr,
         default_action = drop();
     }
 
-    table relation_reply {
+    table relation_reply_table {
         key = {
             hdr.db_relation.aggregate: exact;
         }
@@ -166,12 +166,9 @@ control MyIngress(inout headers hdr,
         ipv4_lpm.apply();
 
         if (hdr.db_relation.isValid()) {
-            
             // Insert tuple in the hash table
             bit<16> hashedKey = 0;
             bit<64> tmpTuple = 0;
-            bit<32> secondAttr = 0;
-            bit<32> thirdAttr = 0;
 
             // Hash the primary key (entryId)
             hash(hashedKey, HashAlgorithm.crc16, (bit<32>)0, { hdr.db_tuple.entryId }, (bit<32>)NB_CELLS);
@@ -191,7 +188,7 @@ control MyIngress(inout headers hdr,
             hdr.db_tuple.secondAttr = tmpTuple[63:32];
             hdr.db_tuple.thirdAttr = tmpTuple[31:0];
             // Drop packet after processing in case no reply is requested
-            relation_reply.apply();
+            relation_reply_table.apply();
         }    
     }
 }
