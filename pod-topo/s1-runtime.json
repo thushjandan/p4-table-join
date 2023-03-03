@@ -31,28 +31,6 @@
           "dstAddr": "08:00:00:00:02:22",
           "port": 2
         }
-      },
-      {
-        "table": "MyIngress.db_join",
-        "match": {
-          "hdr.db_relation.relationId": 1
-        },
-        "action_name": "MyIngress.insert_entry",
-        "action_params": {}
-      },
-      {
-        "table": "MyIngress.db_join",
-        "match": {
-          "hdr.db_relation.relationId": 2
-        },
-        "action_name": "MyIngress.read_entry",
-        "action_params": {}
-      },
-      {
-        "table": "MyIngress.db_join",
-        "default_action": true,
-        "action_name": "MyIngress.drop",
-        "action_params": {}
       }
     ]
   }

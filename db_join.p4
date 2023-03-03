@@ -210,20 +210,24 @@ control MyIngress(inout headers hdr,
         actions = {
             insert_entry;
             read_entry;
-            drop;
-            NoAction;
         }
-        size = 16;
-        default_action = drop();
+        default_action = read_entry();
+
+        // Prepopulate table
+        const entries = {
+            (1) : insert_entry();
+            (2) : read_entry();
+        }
     }
 
     apply {
         // Run IPv4 routing logic.
         ipv4_lpm.apply();
 
+        // Run processing for db_join only if db_relation header is present
         if (hdr.db_relation.isValid()) {
             db_join.apply();
-            // Primary key has not been found in the hash table
+            // If primary key has not been found in the hash table
             // Drop the packet
             if (hdr.db_reply_tuple.isValid() && hdr.db_reply_tuple.forthAttr == 0 && hdr.db_reply_tuple.fifthAttr == 0) {
                 drop();
