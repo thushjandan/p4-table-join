@@ -187,7 +187,7 @@ control MyIngress(inout headers hdr,
         secondAttr = tmpTuple[63:32];
         thirdAttr = tmpTuple[31:0];
 
-        // Add a new entry in reply header stack
+        // Add a new reply header
         hdr.db_reply_tuple.setValid();
         hdr.db_reply_tuple.entryId = hdr.db_tuple.entryId;
         hdr.db_reply_tuple.secondAttr = hdr.db_tuple.secondAttr;
